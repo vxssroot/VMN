@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>VNC - Remote Control</title>
+  <title>VNC Remote</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -33,16 +33,22 @@
       border: 1px solid #2a2f3a;
       padding: 12px;
       margin-bottom: 16px;
-      position: relative;
-      min-height: 300px;
+      min-height: 260px;
       display: flex;
       align-items: center;
       justify-content: center;
+      flex-direction: column;
     }
     video {
       width: 100%;
       border-radius: 8px;
       background: #0b0e14;
+      display: none;
+    }
+    video.active { display: block; }
+    .placeholder {
+      color: #4a5568;
+      font-size: 14px;
     }
     .controls {
       display: flex;
@@ -62,10 +68,9 @@
       min-width: 100px;
     }
     .controls button:active { transform: scale(0.96); }
-    .btn-start { background: #22c55e; color: #0b0e14; }
+    .btn-host { background: #fbbf24; color: #0b0e14; }
     .btn-stop { background: #ef4444; color: #fff; }
     .btn-copy { background: #1a73e8; color: #fff; }
-    .btn-host { background: #fbbf24; color: #0b0e14; }
     .status {
       margin-top: 12px;
       font-size: 13px;
@@ -110,7 +115,6 @@
       font-weight: 700;
       cursor: pointer;
     }
-    .input-group button:active { transform: scale(0.96); }
     .toast {
       position: fixed;
       bottom: 20px;
@@ -131,28 +135,24 @@
 </head>
 <body>
 
-<div class="container" id="app">
+<div class="container">
   <h1>🖥️ VNC Remote</h1>
-  <div class="sub">Share your screen or view someone else's — no install required</div>
+  <div class="sub">Share your screen — no install required</div>
 
-  <!-- Video Display -->
-  <div class="video-container" id="videoContainer">
+  <div class="video-container">
     <video id="remoteVideo" autoplay playsinline></video>
-    <div style="position:absolute;color:#4a5568;font-size:14px;" id="placeholderText">Waiting for connection...</div>
+    <div class="placeholder" id="placeholder">Waiting for connection...</div>
   </div>
 
-  <!-- Status -->
   <div class="status" id="status">🔴 Not connected</div>
 
-  <!-- Peer ID (for host) -->
-  <div id="hostSection" class="hidden">
+  <div id="hostSection">
     <div class="peer-id" id="peerIdDisplay">Generating...</div>
     <div class="input-group">
       <button class="btn-copy" id="copyBtn">📋 Copy ID</button>
     </div>
   </div>
 
-  <!-- Client: Enter Host ID -->
   <div id="clientSection">
     <div class="input-group">
       <input type="text" id="peerInput" placeholder="Enter host ID to connect..." />
@@ -160,28 +160,26 @@
     </div>
   </div>
 
-  <!-- Controls -->
   <div class="controls">
     <button class="btn-host" id="hostBtn">🎥 Share Screen</button>
-    <button class="btn-start hidden" id="startBtn">▶️ Start</button>
     <button class="btn-stop hidden" id="stopBtn">⏹️ Stop</button>
   </div>
 </div>
 
-<!-- Toast -->
 <div class="toast" id="toast"></div>
 
 <script>
   // ============================================================
-  // VNC REMOTE — WebRTC Screen Sharing
+  // VNC REMOTE — With WebRTC & PeerJS (free signaling)
   // ============================================================
 
   // ---- CONFIG ----
-  const STUN = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-    ]
+  // Using a free public PeerJS server (no API key needed)
+  const PEERJS_CONFIG = {
+    host: '0.peerjs.com',
+    port: 443,
+    path: '/',
+    secure: true,
   };
 
   // ---- DOM ----
@@ -193,18 +191,16 @@
   const peerInput = document.getElementById('peerInput');
   const connectBtn = document.getElementById('connectBtn');
   const hostBtn = document.getElementById('hostBtn');
-  const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
   const copyBtn = document.getElementById('copyBtn');
   const toast = document.getElementById('toast');
-  const placeholderText = document.getElementById('placeholderText');
+  const placeholder = document.getElementById('placeholder');
 
-  // ---- STATE ----
   let peer = null;
   let connection = null;
-  let isHost = false;
   let localStream = null;
-  let dataChannel = null;
+  let isHost = false;
+  let peerId = '';
 
   // ---- TOAST ----
   function showToast(msg) {
@@ -214,25 +210,32 @@
     toast._timer = setTimeout(() => toast.classList.remove('show'), 3000);
   }
 
-  // ---- UPDATE STATUS ----
+  // ---- SET STATUS ----
   function setStatus(text, color = '#8a9bb0') {
-    statusEl.innerHTML = text;
+    statusEl.textContent = text;
     statusEl.style.color = color;
   }
 
   // ---- GENERATE PEER ID ----
   function generatePeerId() {
-    return 'VNC-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+    return 'vnc-' + Math.random().toString(36).substring(2, 8);
   }
 
-  // ---- COPY PEER ID ----
+  // ---- COPY ----
   copyBtn.addEventListener('click', function() {
-    const id = peerIdDisplay.textContent;
-    navigator.clipboard.writeText(id).then(() => showToast('✅ Copied!'));
+    navigator.clipboard.writeText(peerId).then(() => showToast('✅ Copied!'));
   });
 
-  // ---- HOST: START SCREEN SHARING ----
+  // ============================================================
+  // HOST: SHARE SCREEN
+  // ============================================================
   hostBtn.addEventListener('click', async function() {
+    // Check if getDisplayMedia is available (desktop only)
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      showToast('❌ Screen sharing is only supported on desktop browsers.');
+      return;
+    }
+
     try {
       localStream = await navigator.mediaDevices.getDisplayMedia({
         video: { cursor: 'always' },
@@ -240,187 +243,135 @@
       });
 
       isHost = true;
-      hostSection.classList.remove('hidden');
-      clientSection.classList.add('hidden');
       hostBtn.classList.add('hidden');
-      startBtn.classList.remove('hidden');
+      stopBtn.classList.remove('hidden');
 
-      const peerId = generatePeerId();
-      peerIdDisplay.textContent = peerId;
+      // Create PeerJS peer
+      peerId = generatePeerId();
+      peer = new Peer(peerId, PEERJS_CONFIG);
 
-      // Start peer connection
-      peer = new RTCPeerConnection(STUN);
-      localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+      peer.on('open', (id) => {
+        peerIdDisplay.textContent = id;
+        setStatus('🟡 Hosting — share ID: ' + id, '#fbbf24');
+        showToast('✅ Hosting started! Share your ID.');
+      });
 
-      // Create data channel for control
-      dataChannel = peer.createDataChannel('control');
-      dataChannel.onopen = () => setStatus('🟢 Hosting (waiting for client)', '#22c55e');
-      dataChannel.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        handleControl(data);
-      };
+      peer.on('connection', (conn) => {
+        connection = conn;
+        conn.on('open', () => {
+          setStatus('🟢 Client connected!', '#22c55e');
+          showToast('🟢 Client connected!');
+        });
 
-      // On ICE candidate
-      peer.onicecandidate = (event) => {
-        if (event.candidate) return;
-        // Offer ready
-      };
+        conn.on('data', (data) => {
+          // Handle mouse/keyboard data from client
+          console.log('Control:', data);
+        });
 
-      peer.ontrack = (event) => {
-        remoteVideo.srcObject = event.streams[0];
-        placeholderText.classList.add('hidden');
-        setStatus('🟢 Client connected!', '#22c55e');
-      };
+        // Send screen stream
+        const call = peer.call(conn.peer, localStream);
+        call.on('stream', (remoteStream) => {
+          remoteVideo.srcObject = remoteStream;
+          remoteVideo.classList.add('active');
+          placeholder.style.display = 'none';
+        });
+      });
 
-      // Create offer
-      const offer = await peer.createOffer();
-      await peer.setLocalDescription(offer);
+      peer.on('error', (err) => {
+        showToast('❌ Peer error: ' + err.message);
+      });
 
-      // Store offer in localStorage so client can retrieve it
-      localStorage.setItem('vnc_offer_' + peerId, JSON.stringify({
-        sdp: peer.localDescription.sdp,
-        type: peer.localDescription.type
-      }));
-
-      setStatus('🟡 Hosting — share this ID: ' + peerId, '#fbbf24');
-      showToast('✅ Hosting started! Share the ID with client.');
     } catch (err) {
-      showToast('❌ Failed to share screen: ' + err.message);
+      showToast('❌ Failed to share: ' + err.message);
     }
   });
 
-  // ---- START (after hosting) ----
-  startBtn.addEventListener('click', function() {
-    // Client connects automatically via the ID
-    showToast('📡 Waiting for client to connect...');
-  });
-
-  // ---- STOP ----
+  // ============================================================
+  // STOP HOSTING
+  // ============================================================
   stopBtn.addEventListener('click', function() {
     if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
+      localStream.getTracks().forEach(t => t.stop());
       localStream = null;
     }
     if (peer) {
-      peer.close();
+      peer.destroy();
       peer = null;
     }
     isHost = false;
-    hostSection.classList.add('hidden');
-    clientSection.classList.remove('hidden');
     hostBtn.classList.remove('hidden');
-    startBtn.classList.add('hidden');
+    stopBtn.classList.add('hidden');
+    remoteVideo.classList.remove('active');
     remoteVideo.srcObject = null;
-    placeholderText.classList.remove('hidden');
+    placeholder.style.display = 'block';
     setStatus('🔴 Stopped', '#ef4444');
     showToast('⏹️ Session ended');
   });
 
-  // ---- CLIENT: CONNECT TO HOST ----
-  connectBtn.addEventListener('click', async function() {
-    const peerId = peerInput.value.trim();
-    if (!peerId) {
+  // ============================================================
+  // CLIENT: CONNECT TO HOST
+  // ============================================================
+  connectBtn.addEventListener('click', function() {
+    const targetId = peerInput.value.trim();
+    if (!targetId) {
       showToast('❌ Please enter a host ID.');
       return;
     }
 
-    const offerData = localStorage.getItem('vnc_offer_' + peerId);
-    if (!offerData) {
-      showToast('❌ Host not found. Make sure the host is running.');
-      return;
-    }
+    // Create client peer (random ID)
+    const clientPeer = new Peer(generatePeerId(), PEERJS_CONFIG);
 
-    try {
-      const offer = JSON.parse(offerData);
-      peer = new RTCPeerConnection(STUN);
+    clientPeer.on('open', () => {
+      // Connect to host
+      const conn = clientPeer.connect(targetId);
+      connection = conn;
 
-      peer.ondatachannel = (event) => {
-        dataChannel = event.channel;
-        dataChannel.onopen = () => setStatus('🟢 Connected to host', '#22c55e');
-        dataChannel.onmessage = (e) => {
-          const data = JSON.parse(e.data);
-          handleControl(data);
-        };
-      };
-
-      peer.ontrack = (event) => {
-        remoteVideo.srcObject = event.streams[0];
-        placeholderText.classList.add('hidden');
-        setStatus('🟢 Connected! Viewing host screen', '#22c55e');
+      conn.on('open', () => {
+        setStatus('🟢 Connected to host!', '#22c55e');
         showToast('✅ Connected to host!');
-      };
-
-      await peer.setRemoteDescription({
-        sdp: offer.sdp,
-        type: offer.type
       });
 
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
+      // Receive screen stream
+      clientPeer.on('call', (call) => {
+        call.answer(); // no stream from client
+        call.on('stream', (remoteStream) => {
+          remoteVideo.srcObject = remoteStream;
+          remoteVideo.classList.add('active');
+          placeholder.style.display = 'none';
+        });
+      });
 
-      // Store answer for host (if needed for reconnection)
-      setStatus('🟢 Connected to host', '#22c55e');
-    } catch (err) {
+      conn.on('data', (data) => {
+        console.log('From host:', data);
+      });
+
+      conn.on('close', () => {
+        setStatus('🔴 Disconnected', '#ef4444');
+        showToast('🔌 Disconnected from host');
+        remoteVideo.classList.remove('active');
+        remoteVideo.srcObject = null;
+        placeholder.style.display = 'block';
+      });
+
+      conn.on('error', (err) => {
+        showToast('❌ Connection error: ' + err.message);
+      });
+    });
+
+    clientPeer.on('error', (err) => {
       showToast('❌ Failed to connect: ' + err.message);
-    }
+    });
   });
 
-  // ---- HANDLE CONTROL (Mouse/Keyboard) ----
-  function handleControl(data) {
-    // For now, we just log control events
-    // Future: implement mouse/keyboard relay
-    console.log('Control:', data);
-  }
-
-  // ---- KEYBOARD SHORTCUTS ----
-  document.addEventListener('keydown', (e) => {
-    if (dataChannel && dataChannel.readyState === 'open') {
-      dataChannel.send(JSON.stringify({
-        type: 'keydown',
-        key: e.key,
-        code: e.code,
-        ctrlKey: e.ctrlKey,
-        shiftKey: e.shiftKey,
-        altKey: e.altKey,
-        metaKey: e.metaKey
-      }));
-    }
-  });
-
-  // ---- MOUSE EVENTS (on video) ----
-  remoteVideo.addEventListener('click', (e) => {
-    if (!dataChannel || dataChannel.readyState !== 'open') return;
-    const rect = remoteVideo.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    dataChannel.send(JSON.stringify({
-      type: 'click',
-      x: x,
-      y: y,
-      button: e.button
-    }));
-  });
-
-  remoteVideo.addEventListener('mousemove', (e) => {
-    if (!dataChannel || dataChannel.readyState !== 'open') return;
-    const rect = remoteVideo.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    dataChannel.send(JSON.stringify({
-      type: 'mousemove',
-      x: x,
-      y: y
-    }));
-  });
-
-  // ---- KEYBOARD SHORTCUT: ESC to disconnect ----
+  // ---- KEYBOARD SHORTCUT: ESCAPE TO DISCONNECT ----
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (peer) {
-        peer.close();
-        peer = null;
+      if (connection) {
+        connection.close();
+        connection = null;
+        remoteVideo.classList.remove('active');
         remoteVideo.srcObject = null;
-        placeholderText.classList.remove('hidden');
+        placeholder.style.display = 'block';
         setStatus('🔴 Disconnected', '#ef4444');
         showToast('🔌 Disconnected');
       }
@@ -429,7 +380,7 @@
 
   // ---- INIT ----
   setStatus('🔴 Not connected', '#ef4444');
-  showToast('📡 Open this page on two devices — host on one, client on the other.');
+  showToast('📡 Open this page on two devices — host on desktop, client on mobile.');
 </script>
 </body>
 </html>
