@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>VNC Remote</title>
+  <title>ScreenShare RAT</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       background: #0b0e14;
       font-family: 'Segoe UI', Arial, sans-serif;
-      color: #fff;
+      color: #e0e6f0;
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -19,18 +19,31 @@
     .container {
       max-width: 700px;
       width: 100%;
-      background: #141a24;
-      border-radius: 24px;
+      background: rgba(17, 26, 36, 0.7);
+      backdrop-filter: blur(24px);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 28px;
       padding: 24px 20px;
-      border: 1px solid #2a2f3a;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
       text-align: center;
     }
-    h1 { color: #fbbf24; font-size: 22px; margin-bottom: 4px; }
-    .sub { color: #8a9bb0; font-size: 13px; margin-bottom: 20px; }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #00ffcc, #7c3aed);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 4px;
+    }
+    .sub {
+      color: #6b7280;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
     .video-container {
       background: #0b0e14;
       border-radius: 16px;
-      border: 1px solid #2a2f3a;
+      border: 1px solid rgba(255,255,255,0.06);
       padding: 12px;
       margin-bottom: 16px;
       min-height: 260px;
@@ -55,15 +68,18 @@
       gap: 10px;
       flex-wrap: wrap;
       justify-content: center;
+      margin-top: 8px;
     }
     .controls button {
       padding: 10px 20px;
       border: none;
-      border-radius: 10px;
+      border-radius: 12px;
       font-weight: 700;
       font-size: 14px;
       cursor: pointer;
       transition: 0.15s;
+      font-family: inherit;
+      touch-action: manipulation;
       flex: 1;
       min-width: 100px;
     }
@@ -71,23 +87,24 @@
     .btn-host { background: #fbbf24; color: #0b0e14; }
     .btn-stop { background: #ef4444; color: #fff; }
     .btn-copy { background: #1a73e8; color: #fff; }
+    .btn-connect { background: #22c55e; color: #fff; }
     .status {
-      margin-top: 12px;
+      margin: 12px 0 10px;
       font-size: 13px;
       color: #8a9bb0;
     }
     .status .green { color: #22c55e; }
     .status .red { color: #ef4444; }
     .hidden { display: none; }
-    .peer-id {
-      background: #0b0e14;
+    .room-id {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 12px;
       padding: 10px;
-      border-radius: 8px;
-      border: 1px solid #2a2f3a;
       font-family: monospace;
-      font-size: 14px;
+      font-size: 20px;
       color: #fbbf24;
-      word-break: break-all;
+      letter-spacing: 2px;
       margin: 10px 0;
     }
     .input-group {
@@ -97,34 +114,26 @@
     }
     .input-group input {
       flex: 1;
-      padding: 10px 12px;
-      border-radius: 10px;
-      border: 1px solid #2a2f3a;
-      background: #0b0e14;
-      color: #fff;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.04);
+      color: #e0e6f0;
       font-size: 14px;
       outline: none;
+      font-family: inherit;
     }
-    .input-group input:focus { border-color: #fbbf24; }
-    .input-group button {
-      padding: 10px 16px;
-      border: none;
-      border-radius: 10px;
-      background: #fbbf24;
-      color: #0b0e14;
-      font-weight: 700;
-      cursor: pointer;
-    }
+    .input-group input:focus { border-color: #7c3aed; }
     .toast {
       position: fixed;
       bottom: 20px;
       left: 50%;
       transform: translateX(-50%);
       background: #1e2632;
+      border: 1px solid rgba(255,255,255,0.06);
       padding: 10px 20px;
-      border-radius: 10px;
+      border-radius: 12px;
       font-size: 13px;
-      border: 1px solid #2a2f3a;
       opacity: 0;
       transition: opacity 0.3s;
       pointer-events: none;
@@ -136,7 +145,7 @@
 <body>
 
 <div class="container">
-  <h1>🖥️ VNC Remote</h1>
+  <h1>🖥️ ScreenShare RAT</h1>
   <div class="sub">Share your screen — no install required</div>
 
   <div class="video-container">
@@ -147,16 +156,16 @@
   <div class="status" id="status">🔴 Not connected</div>
 
   <div id="hostSection">
-    <div class="peer-id" id="peerIdDisplay">Generating...</div>
-    <div class="input-group">
-      <button class="btn-copy" id="copyBtn">📋 Copy ID</button>
+    <div class="room-id" id="roomIdDisplay">Loading...</div>
+    <div class="controls">
+      <button class="btn-copy" id="copyBtn">📋 Copy Room ID</button>
     </div>
   </div>
 
   <div id="clientSection">
     <div class="input-group">
-      <input type="text" id="peerInput" placeholder="Enter host ID to connect..." />
-      <button id="connectBtn">🔗 Connect</button>
+      <input type="text" id="roomInput" placeholder="Enter 6‑digit room code..." maxlength="6" />
+      <button class="btn-connect" id="connectBtn">🔗 Join</button>
     </div>
   </div>
 
@@ -170,25 +179,23 @@
 
 <script>
   // ============================================================
-  // VNC REMOTE — With WebRTC & PeerJS (free signaling)
+  // SCREENSHARE RAT — WebRTC with Built‑in Signalling
   // ============================================================
 
   // ---- CONFIG ----
-  // Using a free public PeerJS server (no API key needed)
-  const PEERJS_CONFIG = {
-    host: '0.peerjs.com',
-    port: 443,
-    path: '/',
-    secure: true,
+  const STUN = {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+    ]
   };
 
   // ---- DOM ----
   const remoteVideo = document.getElementById('remoteVideo');
   const statusEl = document.getElementById('status');
-  const peerIdDisplay = document.getElementById('peerIdDisplay');
-  const hostSection = document.getElementById('hostSection');
-  const clientSection = document.getElementById('clientSection');
-  const peerInput = document.getElementById('peerInput');
+  const roomIdDisplay = document.getElementById('roomIdDisplay');
+  const roomInput = document.getElementById('roomInput');
   const connectBtn = document.getElementById('connectBtn');
   const hostBtn = document.getElementById('hostBtn');
   const stopBtn = document.getElementById('stopBtn');
@@ -196,11 +203,13 @@
   const toast = document.getElementById('toast');
   const placeholder = document.getElementById('placeholder');
 
+  // ---- STATE ----
   let peer = null;
-  let connection = null;
+  let dataChannel = null;
   let localStream = null;
   let isHost = false;
-  let peerId = '';
+  let roomId = '';
+  let clientPeer = null;
 
   // ---- TOAST ----
   function showToast(msg) {
@@ -212,25 +221,22 @@
 
   // ---- SET STATUS ----
   function setStatus(text, color = '#8a9bb0') {
-    statusEl.textContent = text;
+    statusEl.innerHTML = text;
     statusEl.style.color = color;
   }
 
-  // ---- GENERATE PEER ID ----
-  function generatePeerId() {
-    return 'vnc-' + Math.random().toString(36).substring(2, 8);
+  // ---- GENERATE ROOM ID ----
+  function generateRoomId() {
+    return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
   // ---- COPY ----
   copyBtn.addEventListener('click', function() {
-    navigator.clipboard.writeText(peerId).then(() => showToast('✅ Copied!'));
+    navigator.clipboard.writeText(roomId).then(() => showToast('✅ Room ID copied!'));
   });
 
-  // ============================================================
-  // HOST: SHARE SCREEN
-  // ============================================================
+  // ---- HOST: SHARE SCREEN ----
   hostBtn.addEventListener('click', async function() {
-    // Check if getDisplayMedia is available (desktop only)
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       showToast('❌ Screen sharing is only supported on desktop browsers.');
       return;
@@ -246,56 +252,62 @@
       hostBtn.classList.add('hidden');
       stopBtn.classList.remove('hidden');
 
-      // Create PeerJS peer
-      peerId = generatePeerId();
-      peer = new Peer(peerId, PEERJS_CONFIG);
+      // Generate room ID
+      roomId = generateRoomId();
+      roomIdDisplay.textContent = roomId;
 
-      peer.on('open', (id) => {
-        peerIdDisplay.textContent = id;
-        setStatus('🟡 Hosting — share ID: ' + id, '#fbbf24');
-        showToast('✅ Hosting started! Share your ID.');
-      });
+      // Create peer
+      peer = new RTCPeerConnection(STUN);
+      localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
 
-      peer.on('connection', (conn) => {
-        connection = conn;
-        conn.on('open', () => {
-          setStatus('🟢 Client connected!', '#22c55e');
-          showToast('🟢 Client connected!');
-        });
+      // Data channel for control
+      dataChannel = peer.createDataChannel('control');
+      dataChannel.onopen = () => setStatus('🟢 Hosting — waiting for client', '#22c55e');
+      dataChannel.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        handleControl(data);
+      };
 
-        conn.on('data', (data) => {
-          // Handle mouse/keyboard data from client
-          console.log('Control:', data);
-        });
+      // On ICE candidate
+      peer.onicecandidate = (event) => {
+        if (event.candidate) return;
+        // Offer ready
+      };
 
-        // Send screen stream
-        const call = peer.call(conn.peer, localStream);
-        call.on('stream', (remoteStream) => {
-          remoteVideo.srcObject = remoteStream;
-          remoteVideo.classList.add('active');
-          placeholder.style.display = 'none';
-        });
-      });
+      peer.ontrack = (event) => {
+        remoteVideo.srcObject = event.streams[0];
+        remoteVideo.classList.add('active');
+        placeholder.style.display = 'none';
+        setStatus('🟢 Client connected!', '#22c55e');
+        showToast('🟢 Client connected!');
+      };
 
-      peer.on('error', (err) => {
-        showToast('❌ Peer error: ' + err.message);
-      });
+      // Create offer
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+
+      // Store offer in localStorage with room ID
+      localStorage.setItem('rat_offer_' + roomId, JSON.stringify({
+        sdp: peer.localDescription.sdp,
+        type: peer.localDescription.type
+      }));
+
+      setStatus('🟡 Hosting — Room ID: ' + roomId, '#fbbf24');
+      showToast('✅ Hosting started! Share the Room ID with client.');
 
     } catch (err) {
-      showToast('❌ Failed to share: ' + err.message);
+      showToast('❌ Failed to share screen: ' + err.message);
     }
   });
 
-  // ============================================================
-  // STOP HOSTING
-  // ============================================================
+  // ---- STOP ----
   stopBtn.addEventListener('click', function() {
     if (localStream) {
       localStream.getTracks().forEach(t => t.stop());
       localStream = null;
     }
     if (peer) {
-      peer.destroy();
+      peer.close();
       peer = null;
     }
     isHost = false;
@@ -306,69 +318,121 @@
     placeholder.style.display = 'block';
     setStatus('🔴 Stopped', '#ef4444');
     showToast('⏹️ Session ended');
+    // Clean up stored offer
+    if (roomId) {
+      localStorage.removeItem('rat_offer_' + roomId);
+    }
   });
 
-  // ============================================================
-  // CLIENT: CONNECT TO HOST
-  // ============================================================
-  connectBtn.addEventListener('click', function() {
-    const targetId = peerInput.value.trim();
-    if (!targetId) {
-      showToast('❌ Please enter a host ID.');
+  // ---- CLIENT: CONNECT ----
+  connectBtn.addEventListener('click', async function() {
+    const room = roomInput.value.trim();
+    if (!room || room.length !== 6) {
+      showToast('❌ Please enter a valid 6‑digit room code.');
       return;
     }
 
-    // Create client peer (random ID)
-    const clientPeer = new Peer(generatePeerId(), PEERJS_CONFIG);
+    const offerData = localStorage.getItem('rat_offer_' + room);
+    if (!offerData) {
+      showToast('❌ Room not found. Make sure the host is running.');
+      return;
+    }
 
-    clientPeer.on('open', () => {
-      // Connect to host
-      const conn = clientPeer.connect(targetId);
-      connection = conn;
+    try {
+      const offer = JSON.parse(offerData);
+      clientPeer = new RTCPeerConnection(STUN);
 
-      conn.on('open', () => {
-        setStatus('🟢 Connected to host!', '#22c55e');
+      clientPeer.ondatachannel = (event) => {
+        dataChannel = event.channel;
+        dataChannel.onopen = () => setStatus('🟢 Connected to host', '#22c55e');
+        dataChannel.onmessage = (e) => {
+          const data = JSON.parse(e.data);
+          handleControl(data);
+        };
+      };
+
+      clientPeer.ontrack = (event) => {
+        remoteVideo.srcObject = event.streams[0];
+        remoteVideo.classList.add('active');
+        placeholder.style.display = 'none';
+        setStatus('🟢 Connected! Viewing host screen', '#22c55e');
         showToast('✅ Connected to host!');
+      };
+
+      await clientPeer.setRemoteDescription({
+        sdp: offer.sdp,
+        type: offer.type
       });
 
-      // Receive screen stream
-      clientPeer.on('call', (call) => {
-        call.answer(); // no stream from client
-        call.on('stream', (remoteStream) => {
-          remoteVideo.srcObject = remoteStream;
-          remoteVideo.classList.add('active');
-          placeholder.style.display = 'none';
-        });
-      });
+      const answer = await clientPeer.createAnswer();
+      await clientPeer.setLocalDescription(answer);
 
-      conn.on('data', (data) => {
-        console.log('From host:', data);
-      });
+      // Store answer for host (if needed)
+      localStorage.setItem('rat_answer_' + room, JSON.stringify({
+        sdp: clientPeer.localDescription.sdp,
+        type: clientPeer.localDescription.type
+      }));
 
-      conn.on('close', () => {
-        setStatus('🔴 Disconnected', '#ef4444');
-        showToast('🔌 Disconnected from host');
-        remoteVideo.classList.remove('active');
-        remoteVideo.srcObject = null;
-        placeholder.style.display = 'block';
-      });
-
-      conn.on('error', (err) => {
-        showToast('❌ Connection error: ' + err.message);
-      });
-    });
-
-    clientPeer.on('error', (err) => {
+      setStatus('🟢 Connected to host', '#22c55e');
+    } catch (err) {
       showToast('❌ Failed to connect: ' + err.message);
-    });
+    }
   });
 
-  // ---- KEYBOARD SHORTCUT: ESCAPE TO DISCONNECT ----
+  // ---- HANDLE CONTROL (Mouse/Keyboard) ----
+  function handleControl(data) {
+    // For now, just log control events
+    // Future: implement mouse/keyboard relay
+    console.log('Control:', data);
+  }
+
+  // ---- KEYBOARD SHORTCUTS ----
+  document.addEventListener('keydown', (e) => {
+    if (dataChannel && dataChannel.readyState === 'open') {
+      dataChannel.send(JSON.stringify({
+        type: 'keydown',
+        key: e.key,
+        code: e.code,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey
+      }));
+    }
+  });
+
+  // ---- MOUSE EVENTS (on video) ----
+  remoteVideo.addEventListener('click', (e) => {
+    if (!dataChannel || dataChannel.readyState !== 'open') return;
+    const rect = remoteVideo.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    dataChannel.send(JSON.stringify({
+      type: 'click',
+      x: x,
+      y: y,
+      button: e.button
+    }));
+  });
+
+  remoteVideo.addEventListener('mousemove', (e) => {
+    if (!dataChannel || dataChannel.readyState !== 'open') return;
+    const rect = remoteVideo.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    dataChannel.send(JSON.stringify({
+      type: 'mousemove',
+      x: x,
+      y: y
+    }));
+  });
+
+  // ---- KEYBOARD SHORTCUT: ESC to disconnect ----
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (connection) {
-        connection.close();
-        connection = null;
+      if (clientPeer) {
+        clientPeer.close();
+        clientPeer = null;
         remoteVideo.classList.remove('active');
         remoteVideo.srcObject = null;
         placeholder.style.display = 'block';
@@ -380,6 +444,7 @@
 
   // ---- INIT ----
   setStatus('🔴 Not connected', '#ef4444');
+  roomIdDisplay.textContent = 'Loading...';
   showToast('📡 Open this page on two devices — host on desktop, client on mobile.');
 </script>
 </body>
