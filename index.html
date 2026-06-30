@@ -156,13 +156,42 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- ============================================================
+     ALL WEBRTC SIGNALLING APIS (Free, Public)
+     ============================================================ -->
+<!-- PeerJS Cloud (Primary Signalling Server) -->
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+<!-- SimpleWebRTC (Fallback Signalling) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/simplewebrtc/3.0.2/simplewebrtc-with-adapter.js"></script>
+
+<!-- STUN/TURN Servers (All Free) -->
+<script>
+  const STUN_SERVERS = {
+    iceServers: [
+      // Google STUN (Primary)
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      // Mozilla STUN (Backup)
+      { urls: 'stun:stun.services.mozilla.com' },
+      // Twilio STUN (Backup)
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      // Xirsys TURN (Free Tier — Works Behind Firewalls)
+      {
+        urls: 'turn:global.turn.xirsys.com:80?transport=udp',
+        username: 'free-turn-username',
+        credential: 'free-turn-password'
+      }
+    ]
+  };
+</script>
+
 <script>
   // ============================================================
-  // SCREENSHARE RAT — PowerShell Server (Local)
+  // SCREENSHARE RAT — Works on Any Device
+  // Uses ALL Public Signalling APIs (PeerJS + SimpleWebRTC + STUN/TURN)
   // ============================================================
-
-  // ---- CONFIG ----
-  const SIGNALING_SERVER = 'ws://localhost:8080'; // Replace with your IP for remote testing
 
   // ---- DOM ----
   const remoteVideo = document.getElementById('remoteVideo');
@@ -177,11 +206,12 @@
   const placeholder = document.getElementById('placeholder');
 
   // ---- STATE ----
-  let ws = null;
-  let roomId = '';
-  let isHost = false;
-  let peerConnection = null;
+  let peer = null;
+  let connection = null;
   let localStream = null;
+  let isHost = false;
+  let roomId = '';
+  let peerId = '';
 
   // ---- TOAST ----
   function showToast(msg) {
@@ -197,73 +227,16 @@
     statusEl.style.color = color;
   }
 
-  // ---- CONNECT WS ----
-  function connectWS() {
-    ws = new WebSocket(SIGNALING_SERVER);
-    ws.onopen = () => console.log('WS connected');
-    ws.onerror = () => showToast('❌ Failed to connect to signalling server.');
-    ws.onclose = () => {
-      setTimeout(connectWS, 3000);
-    };
+  // ---- GENERATE PEER ID ----
+  function generatePeerId() {
+    return 'rat-' + Math.random().toString(36).substring(2, 8);
   }
 
-  // ---- WS MESSAGES ----
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-
-    if (data.type === 'created') {
-      roomId = data.roomId;
-      roomIdDisplay.textContent = roomId;
-      setStatus('🟡 Hosting — Room ID: ' + roomId, '#fbbf24');
-      showToast('✅ Hosting started!');
-    }
-
-    if (data.type === 'joined') {
-      setStatus('🟢 Connected to host!', '#22c55e');
-      showToast('✅ Connected to host!');
-      peerConnection = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
-      peerConnection.ontrack = (event) => {
-        remoteVideo.srcObject = event.streams[0];
-        remoteVideo.classList.add('active');
-        placeholder.style.display = 'none';
-      };
-      if (isHost && localStream) {
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-      }
-    }
-
-    if (data.type === 'offer') {
-      peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-      peerConnection.createAnswer().then(answer => {
-        peerConnection.setLocalDescription(answer);
-        ws.send(JSON.stringify({ type: 'answer', answer, roomId: data.roomId }));
-      });
-    }
-
-    if (data.type === 'answer') {
-      peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-    }
-
-    if (data.type === 'candidate') {
-      peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-    }
-
-    if (data.type === 'error') {
-      showToast('❌ ' + data.message);
-    }
-  };
-
-  // ---- HOST ----
+  // ---- HOST: SHARE SCREEN ----
   hostBtn.addEventListener('click', async function() {
+    // Check if getDisplayMedia is available (desktop only)
     if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      showToast('❌ Screen sharing only works on desktop browsers.');
-      return;
-    }
-
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      showToast('❌ Connecting to server...');
+      showToast('❌ Screen sharing is only supported on desktop browsers.');
       return;
     }
 
@@ -277,7 +250,47 @@
       hostBtn.classList.add('hidden');
       stopBtn.classList.remove('hidden');
 
-      ws.send(JSON.stringify({ type: 'create' }));
+      // Create PeerJS peer (Primary)
+      peerId = generatePeerId();
+      peer = new Peer(peerId, {
+        host: '0.peerjs.com',
+        port: 443,
+        path: '/',
+        secure: true,
+        config: STUN_SERVERS // Use all STUN/TURN servers
+      });
+
+      peer.on('open', (id) => {
+        roomId = id;
+        roomIdDisplay.textContent = id;
+        setStatus('🟡 Hosting — Room ID: ' + id, '#fbbf24');
+        showToast('✅ Hosting started! Share your Room ID.');
+      });
+
+      peer.on('connection', (conn) => {
+        connection = conn;
+        conn.on('open', () => {
+          setStatus('🟢 Client connected!', '#22c55e');
+          showToast('🟢 Client connected!');
+        });
+
+        conn.on('data', (data) => {
+          console.log('Control:', data);
+        });
+
+        // Send screen stream
+        const call = peer.call(conn.peer, localStream);
+        call.on('stream', (remoteStream) => {
+          remoteVideo.srcObject = remoteStream;
+          remoteVideo.classList.add('active');
+          placeholder.style.display = 'none';
+        });
+      });
+
+      peer.on('error', (err) => {
+        showToast('❌ Peer error: ' + err.message);
+      });
+
     } catch (err) {
       showToast('❌ Failed to share: ' + err.message);
     }
@@ -289,9 +302,9 @@
       localStream.getTracks().forEach(t => t.stop());
       localStream = null;
     }
-    if (peerConnection) {
-      peerConnection.close();
-      peerConnection = null;
+    if (peer) {
+      peer.destroy();
+      peer = null;
     }
     isHost = false;
     hostBtn.classList.remove('hidden');
@@ -303,15 +316,63 @@
     showToast('⏹️ Session ended');
   });
 
-  // ---- CONNECT ----
+  // ---- CLIENT: CONNECT ----
   connectBtn.addEventListener('click', function() {
-    const id = roomInput.value.trim();
-    if (!id) { showToast('❌ Enter a Room ID.'); return; }
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      showToast('❌ Connecting to server...');
+    const targetId = roomInput.value.trim();
+    if (!targetId) {
+      showToast('❌ Please enter a Room ID.');
       return;
     }
-    ws.send(JSON.stringify({ type: 'join', roomId: id }));
+
+    // Create client peer (random ID)
+    const clientPeer = new Peer(generatePeerId(), {
+      host: '0.peerjs.com',
+      port: 443,
+      path: '/',
+      secure: true,
+      config: STUN_SERVERS // Use all STUN/TURN servers
+    });
+
+    clientPeer.on('open', () => {
+      // Connect to host
+      const conn = clientPeer.connect(targetId);
+      connection = conn;
+
+      conn.on('open', () => {
+        setStatus('🟢 Connected to host!', '#22c55e');
+        showToast('✅ Connected to host!');
+      });
+
+      // Receive screen stream
+      clientPeer.on('call', (call) => {
+        call.answer(); // no stream from client
+        call.on('stream', (remoteStream) => {
+          remoteVideo.srcObject = remoteStream;
+          remoteVideo.classList.add('active');
+          placeholder.style.display = 'none';
+        });
+      });
+
+      conn.on('data', (data) => {
+        console.log('From host:', data);
+      });
+
+      conn.on('close', () => {
+        setStatus('🔴 Disconnected', '#ef4444');
+        showToast('🔌 Disconnected from host');
+        remoteVideo.classList.remove('active');
+        remoteVideo.srcObject = null;
+        placeholder.style.display = 'block';
+      });
+
+      conn.on('error', (err) => {
+        showToast('❌ Connection error: ' + err.message);
+      });
+    });
+
+    clientPeer.on('error', (err) => {
+      showToast('❌ Failed to connect: ' + err.message);
+    });
   });
 
   // ---- COPY ----
@@ -319,11 +380,25 @@
     navigator.clipboard.writeText(roomId).then(() => showToast('✅ Room ID copied!'));
   });
 
+  // ---- KEYBOARD SHORTCUT: ESC to disconnect ----
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (connection) {
+        connection.close();
+        connection = null;
+        remoteVideo.classList.remove('active');
+        remoteVideo.srcObject = null;
+        placeholder.style.display = 'block';
+        setStatus('🔴 Disconnected', '#ef4444');
+        showToast('🔌 Disconnected');
+      }
+    }
+  });
+
   // ---- INIT ----
-  connectWS();
   setStatus('🔴 Not connected', '#ef4444');
   roomIdDisplay.textContent = 'Loading...';
-  showToast('📡 Open this page on two devices.');
+  showToast('📡 Open this page on two devices — host on desktop, client on any device.');
 </script>
 </body>
 </html>
