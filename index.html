@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>LAZARUS RAT</title>
+  <title>ScreenShare RAT</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -177,18 +177,18 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <script>
   // ============================================================
-  // SCREENSHARE RAT — WebRTC with Built‑in Signalling
+  // SCREENSHARE RAT — PeerJS Cloud (Works Anywhere)
   // ============================================================
 
   // ---- CONFIG ----
-  const STUN = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-    ]
+  const PEERJS_CONFIG = {
+    host: '0.peerjs.com',
+    port: 443,
+    path: '/',
+    secure: true,
   };
 
   // ---- DOM ----
@@ -205,11 +205,10 @@
 
   // ---- STATE ----
   let peer = null;
-  let dataChannel = null;
+  let connection = null;
   let localStream = null;
   let isHost = false;
   let roomId = '';
-  let clientPeer = null;
 
   // ---- TOAST ----
   function showToast(msg) {
@@ -227,7 +226,7 @@
 
   // ---- GENERATE ROOM ID ----
   function generateRoomId() {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return 'rat-' + Math.random().toString(36).substring(2, 8);
   }
 
   // ---- COPY ----
@@ -252,51 +251,42 @@
       hostBtn.classList.add('hidden');
       stopBtn.classList.remove('hidden');
 
-      // Generate room ID
+      // Create PeerJS peer
       roomId = generateRoomId();
-      roomIdDisplay.textContent = roomId;
+      peer = new Peer(roomId, PEERJS_CONFIG);
 
-      // Create peer
-      peer = new RTCPeerConnection(STUN);
-      localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+      peer.on('open', (id) => {
+        roomIdDisplay.textContent = id;
+        setStatus('🟡 Hosting — Room ID: ' + id, '#fbbf24');
+        showToast('✅ Hosting started! Share your Room ID.');
+      });
 
-      // Data channel for control
-      dataChannel = peer.createDataChannel('control');
-      dataChannel.onopen = () => setStatus('🟢 Hosting — waiting for client', '#22c55e');
-      dataChannel.onmessage = (e) => {
-        const data = JSON.parse(e.data);
-        handleControl(data);
-      };
+      peer.on('connection', (conn) => {
+        connection = conn;
+        conn.on('open', () => {
+          setStatus('🟢 Client connected!', '#22c55e');
+          showToast('🟢 Client connected!');
+        });
 
-      // On ICE candidate
-      peer.onicecandidate = (event) => {
-        if (event.candidate) return;
-        // Offer ready
-      };
+        conn.on('data', (data) => {
+          console.log('Control:', data);
+        });
 
-      peer.ontrack = (event) => {
-        remoteVideo.srcObject = event.streams[0];
-        remoteVideo.classList.add('active');
-        placeholder.style.display = 'none';
-        setStatus('🟢 Client connected!', '#22c55e');
-        showToast('🟢 Client connected!');
-      };
+        // Send screen stream
+        const call = peer.call(conn.peer, localStream);
+        call.on('stream', (remoteStream) => {
+          remoteVideo.srcObject = remoteStream;
+          remoteVideo.classList.add('active');
+          placeholder.style.display = 'none';
+        });
+      });
 
-      // Create offer
-      const offer = await peer.createOffer();
-      await peer.setLocalDescription(offer);
-
-      // Store offer in localStorage with room ID
-      localStorage.setItem('rat_offer_' + roomId, JSON.stringify({
-        sdp: peer.localDescription.sdp,
-        type: peer.localDescription.type
-      }));
-
-      setStatus('🟡 Hosting — Room ID: ' + roomId, '#fbbf24');
-      showToast('✅ Hosting started! Share the Room ID with client.');
+      peer.on('error', (err) => {
+        showToast('❌ Peer error: ' + err.message);
+      });
 
     } catch (err) {
-      showToast('❌ Failed to share screen: ' + err.message);
+      showToast('❌ Failed to share: ' + err.message);
     }
   });
 
@@ -307,7 +297,7 @@
       localStream = null;
     }
     if (peer) {
-      peer.close();
+      peer.destroy();
       peer = null;
     }
     isHost = false;
@@ -318,121 +308,67 @@
     placeholder.style.display = 'block';
     setStatus('🔴 Stopped', '#ef4444');
     showToast('⏹️ Session ended');
-    // Clean up stored offer
-    if (roomId) {
-      localStorage.removeItem('rat_offer_' + roomId);
-    }
   });
 
   // ---- CLIENT: CONNECT ----
-  connectBtn.addEventListener('click', async function() {
-    const room = roomInput.value.trim();
-    if (!room || room.length !== 6) {
-      showToast('❌ Please enter a valid 6‑digit room code.');
+  connectBtn.addEventListener('click', function() {
+    const targetId = roomInput.value.trim();
+    if (!targetId) {
+      showToast('❌ Please enter a Room ID.');
       return;
     }
 
-    const offerData = localStorage.getItem('rat_offer_' + room);
-    if (!offerData) {
-      showToast('❌ Room not found. Make sure the host is running.');
-      return;
-    }
+    // Create client peer (random ID)
+    const clientPeer = new Peer(generateRoomId(), PEERJS_CONFIG);
 
-    try {
-      const offer = JSON.parse(offerData);
-      clientPeer = new RTCPeerConnection(STUN);
+    clientPeer.on('open', () => {
+      // Connect to host
+      const conn = clientPeer.connect(targetId);
+      connection = conn;
 
-      clientPeer.ondatachannel = (event) => {
-        dataChannel = event.channel;
-        dataChannel.onopen = () => setStatus('🟢 Connected to host', '#22c55e');
-        dataChannel.onmessage = (e) => {
-          const data = JSON.parse(e.data);
-          handleControl(data);
-        };
-      };
-
-      clientPeer.ontrack = (event) => {
-        remoteVideo.srcObject = event.streams[0];
-        remoteVideo.classList.add('active');
-        placeholder.style.display = 'none';
-        setStatus('🟢 Connected! Viewing host screen', '#22c55e');
+      conn.on('open', () => {
+        setStatus('🟢 Connected to host!', '#22c55e');
         showToast('✅ Connected to host!');
-      };
-
-      await clientPeer.setRemoteDescription({
-        sdp: offer.sdp,
-        type: offer.type
       });
 
-      const answer = await clientPeer.createAnswer();
-      await clientPeer.setLocalDescription(answer);
+      // Receive screen stream
+      clientPeer.on('call', (call) => {
+        call.answer(); // no stream from client
+        call.on('stream', (remoteStream) => {
+          remoteVideo.srcObject = remoteStream;
+          remoteVideo.classList.add('active');
+          placeholder.style.display = 'none';
+        });
+      });
 
-      // Store answer for host (if needed)
-      localStorage.setItem('rat_answer_' + room, JSON.stringify({
-        sdp: clientPeer.localDescription.sdp,
-        type: clientPeer.localDescription.type
-      }));
+      conn.on('data', (data) => {
+        console.log('From host:', data);
+      });
 
-      setStatus('🟢 Connected to host', '#22c55e');
-    } catch (err) {
+      conn.on('close', () => {
+        setStatus('🔴 Disconnected', '#ef4444');
+        showToast('🔌 Disconnected from host');
+        remoteVideo.classList.remove('active');
+        remoteVideo.srcObject = null;
+        placeholder.style.display = 'block';
+      });
+
+      conn.on('error', (err) => {
+        showToast('❌ Connection error: ' + err.message);
+      });
+    });
+
+    clientPeer.on('error', (err) => {
       showToast('❌ Failed to connect: ' + err.message);
-    }
-  });
-
-  // ---- HANDLE CONTROL (Mouse/Keyboard) ----
-  function handleControl(data) {
-    // For now, just log control events
-    // Future: implement mouse/keyboard relay
-    console.log('Control:', data);
-  }
-
-  // ---- KEYBOARD SHORTCUTS ----
-  document.addEventListener('keydown', (e) => {
-    if (dataChannel && dataChannel.readyState === 'open') {
-      dataChannel.send(JSON.stringify({
-        type: 'keydown',
-        key: e.key,
-        code: e.code,
-        ctrlKey: e.ctrlKey,
-        shiftKey: e.shiftKey,
-        altKey: e.altKey,
-        metaKey: e.metaKey
-      }));
-    }
-  });
-
-  // ---- MOUSE EVENTS (on video) ----
-  remoteVideo.addEventListener('click', (e) => {
-    if (!dataChannel || dataChannel.readyState !== 'open') return;
-    const rect = remoteVideo.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    dataChannel.send(JSON.stringify({
-      type: 'click',
-      x: x,
-      y: y,
-      button: e.button
-    }));
-  });
-
-  remoteVideo.addEventListener('mousemove', (e) => {
-    if (!dataChannel || dataChannel.readyState !== 'open') return;
-    const rect = remoteVideo.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    dataChannel.send(JSON.stringify({
-      type: 'mousemove',
-      x: x,
-      y: y
-    }));
+    });
   });
 
   // ---- KEYBOARD SHORTCUT: ESC to disconnect ----
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (clientPeer) {
-        clientPeer.close();
-        clientPeer = null;
+      if (connection) {
+        connection.close();
+        connection = null;
         remoteVideo.classList.remove('active');
         remoteVideo.srcObject = null;
         placeholder.style.display = 'block';
